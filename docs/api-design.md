@@ -2,81 +2,320 @@
 
 ## 1. Overview
 
-QuickNotes uses the JSONPlaceholder REST API to retrieve, create, and delete notes. The API client is implemented in `api.js` using JavaScript's Fetch API and async/await.
+QuickNotes is a note-taking service designed for users to create, view, update, organise and delete their notes. This document specifies the REST API that the production backend should implement.
 
-Base URL:
+The production API described here is a proposed design. The current browser application uses JSONPlaceholder (`https://jsonplaceholder.typicode.com/posts`) as a practice API; it does not yet connect to this production API.
 
-`https://jsonplaceholder.typicode.com/posts`
+### General conventions
 
-## 2. API Operations
+- Base URL: `https://api.quicknotes.example/v1`
+- Data format: JSON
+- Authentication: Bearer token for protected endpoints
+- Resource names: plural nouns
+- HTTPS is required in production.
+- Dates and times use ISO 8601 format in UTC.
 
-### GET — Load Notes
+## 2. Endpoint summary
 
-**Endpoint:** `/posts?_limit=10`
+| Method | Path                       | Description                           | Success status |
+| ------ | -------------------------- | ------------------------------------- | -------------- |
+| POST   | `/auth/register`           | Register a new user                   | 201 Created    |
+| POST   | `/auth/login`              | Authenticate a user and issue a token | 200 OK         |
+| GET    | `/notes`                   | List the authenticated user's notes   | 200 OK         |
+| GET    | `/notes/{id}`              | Retrieve one note                     | 200 OK         |
+| POST   | `/notes`                   | Create a note                         | 201 Created    |
+| PATCH  | `/notes/{id}`              | Update selected fields of a note      | 200 OK         |
+| DELETE | `/notes/{id}`              | Delete a note                         | 204 No Content |
+| GET    | `/tags`                    | List the authenticated user's tags    | 200 OK         |
+| PUT    | `/notes/{id}/tags/{tagId}` | Associate a tag with a note           | 200 OK         |
 
-**Purpose:** Retrieves up to 10 posts from the API for display in the notes list.
+All endpoints except registration and login require a valid authentication token. A user may access only resources they are authorised to use.
 
-**Expected response:** HTTP 200 OK, with a JSON array of posts.
+## 3. Authentication
 
-Each post includes fields such as `userId`, `id`, `title`, and `body`.
+Protected requests include the following header:
 
-### POST — Create a Note
+`Authorization: Bearer <access_token>`
 
-**Endpoint:** `/posts`
+The backend validates the token and identifies the user. The server must not trust a client-supplied user ID to determine ownership of a note.
 
-**Purpose:** Sends a new note to the API.
+## 4. List notes
 
-**Request headers:**
+**Method:** `GET`
 
-`Content-Type: application/json; charset=UTF-8`
+**Path:** `/notes`
 
-**Request body example:**
+**Purpose:** Returns notes belonging to the authenticated user. Pagination and search parameters allow the client to retrieve manageable result sets.
 
-```json
+Example request:
+
+`GET /v1/notes?limit=20&offset=0`
+
+Example successful response — `200 OK`:
+
 {
-  "title": "My first note",
-  "body": "This is a test note.",
-  "userId": 1
+"data": [
+{
+"id": 42,
+"title": "Shopping list",
+"body": "Buy oats and lentils.",
+"createdAt": "2026-10-12T09:00:00Z",
+"updatedAt": "2026-10-12T09:00:00Z",
+"tags": [
+{
+"id": 3,
+"name": "Personal"
 }
-```
+]
+}
+],
+"pagination": {
+"limit": 20,
+"offset": 0,
+"total": 1
+}
+}
 
-**Expected response:** HTTP 201 Created, with a JSON object representing the submitted post and an assigned ID.
+An empty collection returns `200 OK` with an empty `data` array and a total of zero.
 
-The application requires a title and limits it to 100 characters before sending the request.
+## 5. Retrieve one note
 
-### DELETE — Delete a Note
+**Method:** `GET`
 
-**Endpoint:** `/posts/{id}`
+**Path:** `/notes/{id}`
 
-**Purpose:** Sends a request to delete the selected post, where `{id}` is replaced by the post's ID.
+**Purpose:** Returns one note owned by the authenticated user.
 
-**Expected response:** JSONPlaceholder normally responds with HTTP 200 OK for this simulated deletion.
+Example request:
 
-After a successful response, the application removes the note from the displayed list.
+`GET /v1/notes/42`
 
-## 3. Request Handling
+Example successful response — `200 OK`:
 
-The `request()` function is shared by all three operations. It:
+{
+"id": 42,
+"title": "Shopping list",
+"body": "Buy oats and lentils.",
+"createdAt": "2026-10-12T09:00:00Z",
+"updatedAt": "2026-10-12T09:00:00Z"
+}
 
-1. Sends the HTTP request using `fetch()`.
-2. Checks the response's `ok` property.
-3. Throws an error if the response indicates an unsuccessful HTTP status.
-4. Returns the parsed JSON data and HTTP status, or `null` data for a 204 response.
+If the note does not exist or is not accessible to the user, the API returns `404 Not Found`.
 
-The calling functions use `try...catch...finally` to handle errors and restore the request buttons after an operation finishes.
+## 6. Create a note
 
-## 4. Error Handling
+**Method:** `POST`
 
-If a request fails, the application displays an error message rather than reporting success.
+**Path:** `/notes`
 
-The application also displays loading messages while requests are in progress. The Load Notes and Create Note buttons, along with the visible Delete buttons, are disabled during a request.
+**Purpose:** Creates a note for the authenticated user.
 
-## 5. Limitations
+Request header:
 
-JSONPlaceholder is a testing API, not a permanent storage service. POST and DELETE requests simulate changes, so created or deleted posts are not permanently saved.
+`Content-Type: application/json`
 
-The application does not currently include authentication, authorization, or a custom backend.
+Example request body:
 
-## 6. Potential Improvements
+{
+"title": "My first note",
+"body": "This is a test note."
+}
 
-Future improvements could include request timeouts, automated API tests, stronger validation, and integration with a backend that permanently stores notes.
+The title is required, must contain non-whitespace characters and must not exceed 100 characters. The body is optional. The backend derives the owner from the authenticated user rather than accepting `userId` from the request body.
+
+Example successful response — `201 Created`:
+
+{
+"id": 101,
+"title": "My first note",
+"body": "This is a test note.",
+"createdAt": "2026-10-12T10:00:00Z",
+"updatedAt": "2026-10-12T10:00:00Z"
+}
+
+The response includes the new resource ID and a `Location: /v1/notes/101` header.
+
+## 7. Update a note
+
+**Method:** `PATCH`
+
+**Path:** `/notes/{id}`
+
+**Purpose:** Updates one or more fields of an existing note.
+
+Example request body:
+
+{
+"title": "Updated shopping list"
+}
+
+Example successful response — `200 OK`:
+
+{
+"id": 101,
+"title": "Updated shopping list",
+"body": "This is a test note.",
+"createdAt": "2026-10-12T10:00:00Z",
+"updatedAt": "2026-10-12T10:30:00Z"
+}
+
+The backend checks ownership and validates any supplied fields before saving the update.
+
+## 8. Delete a note
+
+**Method:** `DELETE`
+
+**Path:** `/notes/{id}`
+
+**Purpose:** Permanently removes a note owned by the authenticated user.
+
+Example request:
+
+`DELETE /v1/notes/101`
+
+Example successful response: `204 No Content`, with no response body.
+
+A repeated deletion of a resource that no longer exists returns `404 Not Found` under this API's proposed convention.
+
+## 9. Register a user
+
+**Method:** `POST`
+
+**Path:** `/auth/register`
+
+**Purpose:** Creates a user account after validating the submitted details.
+
+Example request body:
+
+{
+"email": "user@example.com",
+"password": "a-strong-password"
+}
+
+Example successful response — `201 Created`:
+
+{
+"id": 7,
+"email": "user@example.com"
+}
+
+Passwords must never be returned in API responses and must be stored using a suitable password-hashing algorithm. Production registration should also apply rate limits and appropriate account-verification controls.
+
+## 10. Log in
+
+**Method:** `POST`
+
+**Path:** `/auth/login`
+
+**Purpose:** Verifies credentials and issues an access token.
+
+Example request body:
+
+{
+"email": "user@example.com",
+"password": "a-strong-password"
+}
+
+Example successful response — `200 OK`:
+
+{
+"accessToken": "<access_token>",
+"tokenType": "Bearer",
+"expiresIn": 3600
+}
+
+Invalid credentials return `401 Unauthorized`. The API must not reveal whether a particular email address has an account.
+
+## 11. List tags
+
+**Method:** `GET`
+
+**Path:** `/tags`
+
+**Purpose:** Returns tags belonging to the authenticated user.
+
+Example successful response — `200 OK`:
+
+{
+"data": [
+{
+"id": 3,
+"name": "Personal"
+},
+{
+"id": 4,
+"name": "Research"
+}
+]
+}
+
+## 12. Assign a tag to a note
+
+**Method:** `PUT`
+
+**Path:** `/notes/{id}/tags/{tagId}`
+
+**Purpose:** Associates an existing tag with an existing note owned by the authenticated user. Repeating the request does not create duplicate associations.
+
+Example request:
+
+`PUT /v1/notes/101/tags/3`
+
+Example successful response — `200 OK`:
+
+{
+"noteId": 101,
+"tagId": 3,
+"message": "Tag associated with note."
+}
+
+The backend checks ownership of both resources before creating the association.
+
+## 13. Error responses
+
+The production API uses standard HTTP status codes to communicate failures.
+
+| Status | Name                  | Meaning                                                                           |
+| ------ | --------------------- | --------------------------------------------------------------------------------- |
+| 400    | Bad Request           | Invalid JSON, missing title or invalid field values                               |
+| 401    | Unauthorized          | Missing, invalid or expired authentication token                                  |
+| 403    | Forbidden             | The authenticated user is not permitted to perform the operation                  |
+| 404    | Not Found             | The requested resource does not exist or is not accessible                        |
+| 409    | Conflict              | A resource conflicts with an existing resource, such as a duplicate account email |
+| 422    | Unprocessable Content | The JSON is valid but fails a business validation rule                            |
+| 429    | Too Many Requests     | The client has exceeded a rate limit                                              |
+| 500    | Internal Server Error | An unexpected server-side failure                                                 |
+| 503    | Service Unavailable   | The service is temporarily unavailable                                            |
+
+Example error response — `400 Bad Request`:
+
+{
+"error": {
+"code": "VALIDATION_ERROR",
+"message": "The request contains invalid fields.",
+"details": [
+{
+"field": "title",
+"message": "Title is required and must be 100 characters or fewer."
+}
+],
+"requestId": "req_example_123"
+}
+}
+
+Error responses should use a consistent structure, avoid exposing stack traces or secrets, and include a request identifier where possible to support troubleshooting.
+
+## 14. Design decisions
+
+- **Resource-based URLs:** Notes and tags use plural nouns, and HTTP methods communicate the intended operation.
+- **Appropriate status codes:** Creation uses `201 Created`, successful retrieval and updates use `200 OK`, and deletion uses `204 No Content`.
+- **Pagination:** Listing notes supports `limit` and `offset` so clients do not need to load every note at once.
+- **Authentication and ownership:** Protected resources are associated with the authenticated user, and ownership is checked on the server.
+- **Validation:** Both client and server validate input; server-side validation is authoritative.
+- **Consistent errors:** Clients receive structured errors that are useful without exposing internal implementation details.
+
+## 15. Relationship to the current practice client
+
+The current browser client uses JSONPlaceholder at `https://jsonplaceholder.typicode.com/posts` to demonstrate GET, POST and DELETE requests. JSONPlaceholder simulates writes and does not persist them as a production notes database would.
+
+The proposed QuickNotes endpoints in this document describe the future backend contract. They are not implemented by the current JSONPlaceholder practice API.
